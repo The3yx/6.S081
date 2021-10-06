@@ -262,6 +262,7 @@ fork(void)
   struct proc *np;
   struct proc *p = myproc();
 
+  int mask = p->trace_mask;
   // Allocate process.
   if((np = allocproc()) == 0){
     return -1;
@@ -274,7 +275,7 @@ fork(void)
     return -1;
   }
   np->sz = p->sz;
-
+  np->trace_mask = mask;
   np->parent = p;
 
   // copy saved user registers.
@@ -692,4 +693,18 @@ procdump(void)
     printf("%d %s %s", p->pid, state, p->name);
     printf("\n");
   }
+}
+
+
+//获取proc数量
+uint64
+get_nproc(void)
+{
+  uint64 nproc = 0;
+  for(int i = 0;i < NPROC;i++){
+    if(proc[i].state != UNUSED){
+      nproc++;
+    }
+  }
+  return nproc;
 }
