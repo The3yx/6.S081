@@ -25,6 +25,7 @@ extern char trampoline[]; // trampoline.S
 void
 procinit(void)
 {
+  
   struct proc *p;
   
   initlock(&pid_lock, "nextpid");
@@ -121,6 +122,26 @@ found:
     return 0;
   }
 
+  //进程自己的内核页表
+  p->kpagetable = kvmcopy();
+  if(p->kpagetable == 0){
+    freeproc(p);
+    release(&p->lock);
+    return 0;
+  }
+
+  // Allocate a page for the process's kernel stack.
+    // Map it high in memory, followed by an invalid
+    // guard page.
+    char *pa = kalloc();
+    if(pa == 0)
+      panic("kalloc");
+    uint64 va = KSTACK((int) (p - proc));
+    if(mappages(p->kpagetable, va, PGSIZE, (uint64)pa, PTE_R | PTE_W) != 0)
+      panic("kvmmap");
+    p->kstack = va;
+    
+
   // Set up new context to start executing at forkret,
   // which returns to user space.
   memset(&p->context, 0, sizeof(p->context));
@@ -128,6 +149,22 @@ found:
   p->context.sp = p->kstack + PGSIZE;
 
   return p;
+}
+void
+free_kpagetable(pagetable_t kpagetable)
+{
+  for (int i = 0; i < 512; i++) {
+    pte_t pte = kpagetable[i];
+    if (pte & PTE_V) {
+      kpagetable[i] = 0;
+      if ((pte & (PTE_R | PTE_W | PTE_X)) == 0) {
+        // this PTE points to a lower-level page table.
+        uint64 child = PTE2PA(pte);
+        free_kpagetable((pagetable_t)child);
+      }
+    }
+  }
+  kfree((void*)kpagetable);
 }
 
 // free a proc structure and the data hanging from it,
@@ -142,6 +179,16 @@ freeproc(struct proc *p)
   if(p->pagetable)
     proc_freepagetable(p->pagetable, p->sz);
   p->pagetable = 0;
+  //释放内核栈内存
+  if(p->kstack){
+    pte_t *pte = walk(p->kpagetable,p->kstack,0);
+    if(pte == 0)return ;
+    kfree((void *)(PTE2PA(*pte)));
+  }
+  if(p->kpagetable)
+    free_kpagetable(p->kpagetable);
+  p->kpagetable = 0;
+  p->kstack = 0;
   p->sz = 0;
   p->pid = 0;
   p->parent = 0;
@@ -473,6 +520,8 @@ scheduler(void)
         // before jumping back to us.
         p->state = RUNNING;
         c->proc = p;
+        w_satp(MAKE_SATP(p->kpagetable));
+        sfence_vma();
         swtch(&c->context, &p->context);
 
         // Process is done running for now.
@@ -486,6 +535,7 @@ scheduler(void)
 #if !defined (LAB_FS)
     if(found == 0) {
       intr_on();
+      kvminithart();
       asm volatile("wfi");
     }
 #else
