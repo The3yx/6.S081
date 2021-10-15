@@ -266,6 +266,7 @@ userinit(void)
   // allocate one user page and copy init's instructions
   // and data into it.
   uvminit(p->pagetable, initcode, sizeof(initcode));
+  kvmcopyuvm(p->pagetable,p->kpagetable,0,sizeof(initcode));
   p->sz = PGSIZE;
 
   // prepare for the very first "return" from kernel to user.
@@ -290,11 +291,16 @@ growproc(int n)
 
   sz = p->sz;
   if(n > 0){
+    if(sz + n > PLIC)
+      return -1;
     if((sz = uvmalloc(p->pagetable, sz, sz + n)) == 0) {
       return -1;
     }
+    kvmcopyuvm(p->pagetable, p->kpagetable, sz - n, sz );
   } else if(n < 0){
+    uint psz = sz;
     sz = uvmdealloc(p->pagetable, sz, sz + n);
+    kvmdealloc(p->kpagetable, psz, psz + n);
   }
   p->sz = sz;
   return 0;
@@ -321,7 +327,7 @@ fork(void)
     return -1;
   }
   np->sz = p->sz;
-
+  kvmcopyuvm(np->pagetable,np->kpagetable,0,np->sz);
   np->parent = p;
 
   // copy saved user registers.
